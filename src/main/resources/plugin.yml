@@ -1,0 +1,4 @@
+name: Bungee Fake Forge Mods
+version: ${project.version}
+main: net.stonebound.forgeserverlistping.BungeeFakeForgeMods
+description: Fake Mod Info on Bungee for FML servers
