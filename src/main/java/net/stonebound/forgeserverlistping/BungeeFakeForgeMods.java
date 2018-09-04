@@ -28,12 +28,6 @@
  */
 package net.stonebound.forgeserverlistping;
 
-import ch.jamiete.mcping.MinecraftPing;
-import ch.jamiete.mcping.MinecraftPingOptions;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import net.md_5.bungee.api.AbstractReconnectHandler;
 import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
@@ -48,76 +42,63 @@ import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.event.EventHandler;
 import net.md_5.bungee.event.EventPriority;
 
-import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
+import java.util.concurrent.TimeUnit;
 
-public final class BungeeFakeForgeMods extends Plugin {
+public final class BungeeFakeForgeMods extends Plugin implements Listener {
     private Map<String, List<ServerPing.ModItem>> serverMods = new HashMap<>();
 
     @Override
     public void onEnable() {
-        pingServers();
-        getProxy().getPluginManager().registerListener(this, new Events());
-        getProxy().getPluginManager().registerCommand(this, new RefreshCommand());
+        // 7 min delay for that one time of the week where bungee restarts and all servers at the same time
+        ProxyServer.getInstance().getScheduler().schedule(this, () -> { updateServers(); }, 7L, TimeUnit.MINUTES);
+        getProxy().getPluginManager().registerListener(this, this);
+        getProxy().getPluginManager().registerCommand(this, new InvalidateCommand());
     }
 
-    private void pingServers() {
-        ProxyServer.getInstance().getScheduler().runAsync(this, () -> {
-            ProxyServer.getInstance().getServers().values().forEach((server) -> {
-                try {
-                    String ping = new MinecraftPing().getPing(new MinecraftPingOptions().setHostname(server.getAddress().getHostName()).setPort
-                            (server.getAddress().getPort()));
-
-                    JsonParser parser = new JsonParser();
-                    final JsonObject obj = parser.parse(ping).getAsJsonObject();
-                    final JsonObject modinfo = obj.getAsJsonObject("modinfo");
-                    final JsonArray modlist = modinfo.getAsJsonArray("modList");
-                    int n = modlist.size();
-                    List<ServerPing.ModItem> modItemList = new ArrayList<>();
-                    for (int i = 0; i < n; ++i) {
-                        JsonElement modElement = modlist.get(i);
-                        JsonObject mod = modElement.getAsJsonObject();
-                        String modid = mod.get("modid").getAsString();
-                        String version = mod.get("version").getAsString();
-                        modItemList.add(new ServerPing.ModItem(modid, version));
+    // runs at startup
+    private void updateServers() {
+        getProxy().getScheduler().runAsync(this, () -> {
+            getProxy().getServers().entrySet().forEach((server) -> {
+                if (server.getKey().equals("hub")) return;
+                server.getValue().ping((result, error) -> {
+                    if (error == null) {
+                        serverMods.put(server.getKey(), result.getModinfo().getModList());
                     }
-                    serverMods.put(server.getName(), modItemList);
-                } catch (IOException ioe) {
-                    getLogger().log(Level.WARNING, "Refreshing mod info failed!", ioe);
-                }
+                });
             });
         });
     }
 
-    public class Events implements Listener {
-        @EventHandler(priority = EventPriority.LOW)
-        public void onPing(ProxyPingEvent event) {
-            PendingConnection con = event.getConnection();
-            InetSocketAddress host = con.getVirtualHost();
-            if (host != null) {
-                ServerInfo forcedHost = AbstractReconnectHandler.getForcedHost(con);
-                if (serverMods.get(forcedHost.getName()) != null) {
+    @EventHandler(priority = EventPriority.LOW)
+    public void onProxyPing(ProxyPingEvent event) {
+        PendingConnection connection = event.getConnection();
+        InetSocketAddress host = connection.getVirtualHost();
+        if (host != null) {
+            ServerInfo forcedHost = AbstractReconnectHandler.getForcedHost(connection);
+            if (forcedHost != null && forcedHost.getName().equals("hub")) {
+                event.getResponse().getModinfo().setType("VANILLA");
+            } else if (forcedHost != null) {
+                if (serverMods.containsKey(forcedHost.getName())) {
                     event.getResponse().getModinfo().setModList(serverMods.get(forcedHost.getName()));
                 }
             }
         }
     }
 
-    public class RefreshCommand extends Command {
-        public RefreshCommand() {
-            super("refreshmods", "fsp.command.refresh");
+    public class InvalidateCommand extends Command {
+        public InvalidateCommand() {
+            super("invalidatemods", "bffm.command.refresh");
         }
 
         @Override
         public void execute(CommandSender commandSender, String[] strings) {
-            commandSender.sendMessage(new ComponentBuilder("Refreshing stored server modlist!").create());
+            commandSender.sendMessage(new ComponentBuilder("Invalidating all server modlists!").create());
             serverMods.clear();
-            pingServers();
+            updateServers();
         }
     }
 }
