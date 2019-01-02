@@ -79,12 +79,14 @@ public final class BungeeFakeForgeMods extends Plugin implements Listener {
         InetSocketAddress host = connection.getVirtualHost();
         if (host != null) {
             ServerInfo forcedHost = AbstractReconnectHandler.getForcedHost(connection);
-            if (forcedHost != null && forcedHost.getName().equals("hub")) {
-                event.getResponse().getModinfo().setType("VANILLA");
-            } else if (forcedHost != null) {
-                if (serverMods.containsKey(forcedHost.getName())) {
+            if (forcedHost != null) {
+                if (serverMods.containsKey(forcedHost.getName()) && !forcedHost.getName().equals("hub")) {
                     event.getResponse().getModinfo().setModList(serverMods.get(forcedHost.getName()));
+                } else {
+                    event.getResponse().getModinfo().setType("VANILLA");
                 }
+            } else {
+                event.getResponse().getModinfo().setType("VANILLA");
             }
         }
     }
